@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Year Progress Widget - Neon Edition</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #000;
+            overflow: hidden;
+            cursor: crosshair;
+            touch-action: none;
+        }
+
+        #canvas-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        .widget-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .widget {
+            background: rgba(0, 0, 0, 0.7);
+            border: 2px solid rgba(0, 255, 255, 0.5);
+            border-radius: 16px;
+            padding: 24px;
+            width: 100%;
+            max-width: 320px;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.3),
+                        0 0 60px rgba(0, 119, 255, 0.2);
+            backdrop-filter: blur(10px);
+            pointer-events: auto;
+        }
+
+        .title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #00ffff;
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 0.8);
+        }
+
+        .battery-container {
+            position: relative;
+            height: 50px;
+            background: rgba(0, 119, 255, 0.1);
+            border: 2px solid rgba(0, 119, 255, 0.3);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 16px;
+            box-shadow: inset 0 0 20px rgba(0, 119, 255, 0.2);
+        }
+
+        .battery-fill {
+            height: 100%;
+            background: linear-gradient(90deg, 
+                #0077ff 0%, 
+                #00ffff 50%, 
+                #00ff88 100%);
+            border-radius: 10px;
+            transition: width 0.5s ease-out, background 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 12px;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.6),
+                        inset 0 0 20px rgba(255, 255, 255, 0.3);
+        }
+
+        .percentage-inside {
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 1),
+                         0 0 20px rgba(0, 119, 255, 0.8);
+        }
+
+        .stats {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .day-info {
+            font-size: 12px;
+            color: #00ffff;
+            text-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
+        }
+
+        .percentage-display {
+            font-size: 18px;
+            font-weight: bold;
+            color: #00ffff;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 0.8);
+        }
+
+        .remaining {
+            font-size: 11px;
+            color: #0077ff;
+            margin-top: 8px;
+            text-align: center;
+            text-shadow: 0 0 5px rgba(0, 119, 255, 0.5);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.9; }
+        }
+
+        .battery-fill.animating {
+            animation: pulse 2s ease-in-out;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+    
+    <div class="widget-container">
+        <div class="widget">
+            <div class="title">Year Progress</div>
+            
+            <div class="battery-container">
+                <div class="battery-fill" id="batteryFill">
+                    <span class="percentage-inside" id="percentageInside"></span>
+                </div>
+            </div>
+            
+            <div class="stats">
+                <div class="day-info" id="dayInfo">Day 0/365</div>
+                <div class="percentage-display" id="percentage">0%</div>
+            </div>
+            
+            <div class="remaining" id="remaining"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'https://cdn.skypack.dev/three@0.136.0';
+        import { EffectComposer } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/postprocessing/UnrealBloomPass.js';
+
+        // ===== THREE.JS BACKGROUND =====
+        let mouseX = 0, mouseY = 0;
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // Bloom
+        const composer = new EffectComposer(renderer);
+        composer.addPass(new RenderPass(scene, camera));
+        const bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight), 
+            2.0, 0.4, 0.1
+        );
+        composer.addPass(bloomPass);
+
+        // Starfield
+        const starGeo = new THREE.BufferGeometry();
+        const starCount = 12000;
+        const starPos = new Float32Array(starCount * 3);
+        for(let i = 0; i < starCount * 3; i++) {
+            starPos[i] = (Math.random() - 0.5) * 150;
+        }
+        starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+        const starMat = new THREE.PointsMaterial({ 
+            size: 0.05, 
+            color: 0xffffff, 
+            transparent: true, 
+            opacity: 0.5 
+        });
+        const stars = new THREE.Points(starGeo, starMat);
+        scene.add(stars);
+
+        // Explosion Particles
+        const exCount = 600;
+        const exGeo = new THREE.BufferGeometry();
+        const exPos = new Float32Array(exCount * 3);
+        const velocities = new Float32Array(exCount * 3);
+        exGeo.setAttribute('position', new THREE.BufferAttribute(exPos, 3));
+        const exMat = new THREE.PointsMaterial({ 
+            size: 0.15, 
+            color: 0x00ffff, 
+            transparent: true, 
+            opacity: 0 
+        });
+        const explosion = new THREE.Points(exGeo, exMat);
+        scene.add(explosion);
+
+        // Voxel Group
+        const group = new THREE.Group();
+        const createBox = (size, color) => {
+            const geo = new THREE.BoxGeometry(size, size, size, 6, 6, 6);
+            return new THREE.LineSegments(
+                new THREE.WireframeGeometry(geo), 
+                new THREE.LineBasicMaterial({ color })
+            );
+        };
+        const outer = createBox(5, 0x0077ff);
+        const inner = createBox(3, 0x00ffff);
+        group.add(outer, inner);
+        scene.add(group);
+        camera.position.z = 12;
+
+        // Explosion Trigger
+        function triggerExplosion() {
+            exMat.opacity = 1.0;
+            const pos = exGeo.attributes.position.array;
+            for(let i = 0; i < exCount; i++) {
+                pos[i*3] = 0; 
+                pos[i*3+1] = 0; 
+                pos[i*3+2] = 0;
+                velocities[i*3] = (Math.random() - 0.5) * 0.8;
+                velocities[i*3+1] = (Math.random() - 0.5) * 0.8;
+                velocities[i*3+2] = (Math.random() - 0.5) * 0.8;
+            }
+            exGeo.attributes.position.needsUpdate = true;
+        }
+
+        window.addEventListener('mousemove', (e) => {
+            mouseX = (e.clientX - window.innerWidth/2) / 250;
+            mouseY = (e.clientY - window.innerHeight/2) / 250;
+        });
+
+        window.addEventListener('mousedown', triggerExplosion);
+        window.addEventListener('touchstart', (e) => {
+            triggerExplosion();
+            if(e.touches.length > 1) e.preventDefault();
+        }, { passive: false });
+
+        // Animation Loop
+        function animateBackground() {
+            requestAnimationFrame(animateBackground);
+            const t = Date.now() * 0.001;
+
+            // Smooth Drift
+            group.rotation.y += (mouseX - group.rotation.y) * 0.05;
+            group.rotation.x += (mouseY - group.rotation.x) * 0.05;
+            outer.rotation.y += 0.005;
+            inner.rotation.z -= 0.01;
+
+            // Fly-through stars
+            stars.position.z += 0.15;
+            if (stars.position.z > 60) stars.position.z = -60;
+
+            // Explosion Fade & Move
+            if (exMat.opacity > 0) {
+                const p = exGeo.attributes.position.array;
+                for(let i = 0; i < exCount * 3; i++) {
+                    p[i] += velocities[i];
+                }
+                exGeo.attributes.position.needsUpdate = true;
+                exMat.opacity -= 0.012;
+            }
+
+            // Pulse the glow
+            bloomPass.strength = 1.4 + Math.sin(t * 2) * 0.4;
+            
+            // Cube color shift (ORIGINAL animated behavior)
+            const hue = (t * 0.05) % 1;
+            outer.material.color.setHSL(hue, 0.7, 0.5);
+            
+            // Get the current color from the cube
+            const currentColor = outer.material.color;
+            
+            // Update progress bar to follow cube color
+            updateProgressBarColor(currentColor);
+
+            composer.render();
+        }
+
+        // Function to update progress bar color based on cube
+        function updateProgressBarColor(color) {
+            const batteryFill = document.getElementById('batteryFill');
+            if (batteryFill) {
+                // Convert THREE.js color to hex
+                const hexColor = '#' + color.getHexString();
+                
+                // Create gradient with current color
+                // Darken for start, brighten for end
+                const r = color.r * 255;
+                const g = color.g * 255;
+                const b = color.b * 255;
+                
+                // Darker version (start)
+                const darkR = Math.floor(r * 0.6);
+                const darkG = Math.floor(g * 0.6);
+                const darkB = Math.floor(b * 0.6);
+                
+                // Brighter version (end)
+                const brightR = Math.min(255, Math.floor(r * 1.4));
+                const brightG = Math.min(255, Math.floor(g * 1.4));
+                const brightB = Math.min(255, Math.floor(b * 1.4));
+                
+                const darkColor = `rgb(${darkR}, ${darkG}, ${darkB})`;
+                const brightColor = `rgb(${brightR}, ${brightG}, ${brightB})`;
+                
+                batteryFill.style.background = `linear-gradient(90deg, ${darkColor} 0%, ${hexColor} 50%, ${brightColor} 100%)`;
+                batteryFill.style.boxShadow = `0 0 20px ${hexColor}, inset 0 0 20px rgba(255, 255, 255, 0.3)`;
+            }
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animateBackground();
+
+        // ===== YEAR PROGRESS LOGIC =====
+        function updateProgress() {
+            const now = new Date();
+            const start = new Date(now.getFullYear(), 0, 1);
+            const diff = now - start;
+            const oneDay = 1000 * 60 * 60 * 24;
+            const dayOfYear = Math.floor(diff / oneDay) + 1;
+            
+            // Check if leap year
+            const isLeapYear = (now.getFullYear() % 4 === 0 && now.getFullYear() % 100 !== 0) || 
+                               (now.getFullYear() % 400 === 0);
+            const totalDays = isLeapYear ? 366 : 365;
+            
+            // Calculate percentage
+            const progress = (dayOfYear / totalDays) * 100;
+            const progressTo2DP = progress.toFixed(2);
+            
+            // Calculate remaining days
+            const daysRemaining = totalDays - dayOfYear;
+            
+            // Update DOM
+            document.getElementById('dayInfo').textContent = `Day ${dayOfYear}/${totalDays}`;
+            document.getElementById('percentage').textContent = `${progressTo2DP}%`;
+            document.getElementById('remaining').textContent = `${daysRemaining} days remaining`;
+            
+            // Update battery fill
+            const batteryFill = document.getElementById('batteryFill');
+            batteryFill.style.width = `${progress}%`;
+            
+            // Show percentage inside if > 15%
+            const percentageInside = document.getElementById('percentageInside');
+            if (progress > 15) {
+                percentageInside.textContent = `${progressTo2DP}%`;
+            } else {
+                percentageInside.textContent = '';
+            }
+            
+            // Add pulse animation on load
+            batteryFill.classList.add('animating');
+            setTimeout(() => {
+                batteryFill.classList.remove('animating');
+            }, 2000);
+        }
+
+        // Update immediately
+        updateProgress();
+        
+        // Update every hour
+        setInterval(updateProgress, 1000 * 60 * 60);
+        
+        // Update at midnight
+        function scheduleNextUpdate() {
+            const now = new Date();
+            const tomorrow = new Date(now);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            tomorrow.setHours(0, 0, 0, 0);
+            const timeUntilMidnight = tomorrow - now;
+            
+            setTimeout(() => {
+                updateProgress();
+                scheduleNextUpdate();
+            }, timeUntilMidnight);
+        }
+        
+        scheduleNextUpdate();
+    </script>
+</body>
+</html>
